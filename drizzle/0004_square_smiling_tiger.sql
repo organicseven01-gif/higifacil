@@ -1,0 +1,1 @@
+ALTER TABLE `budgets` ADD `budgetNumber` int;

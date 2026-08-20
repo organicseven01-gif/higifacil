@@ -1,0 +1,1 @@
+ALTER TABLE `budgets` MODIFY COLUMN `clientId` int;
