@@ -55,6 +55,22 @@ export const companyCredentials = mysqlTable("company_credentials", {
 export type CompanyCredential = typeof companyCredentials.$inferSelect;
 export type InsertCompanyCredential = typeof companyCredentials.$inferInsert;
 
+// ─── Administradores da Plataforma (dono do HigiFácil, separado de empresas) ──
+// Login próprio e independente do login de empresas/sub-usuários e do antigo
+// OAuth da Manus. Sem cadastro público — a primeira conta é criada por script
+// (ver scripts de seed), nunca por uma tela aberta ao público.
+export const adminUsers = mysqlTable("admin_users", {
+  id: int("id").autoincrement().primaryKey(),
+  email: varchar("email", { length: 320 }).notNull().unique(),
+  passwordHash: varchar("passwordHash", { length: 255 }).notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  lastSignedIn: timestamp("lastSignedIn"),
+});
+export type AdminUser = typeof adminUsers.$inferSelect;
+export type InsertAdminUser = typeof adminUsers.$inferInsert;
+
 // ─── Usuários Sub-Empresa (Múltiplos Acessos por Empresa) ──────────────────────
 export const companyUsers = mysqlTable("company_users", {
   id: int("id").autoincrement().primaryKey(),

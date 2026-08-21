@@ -2,7 +2,6 @@ import { NOT_ADMIN_ERR_MSG, UNAUTHED_ERR_MSG } from '@shared/const';
 import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import type { TrpcContext } from "./context";
-import { ENV } from './env';
 
 const t = initTRPC.context<TrpcContext>().create({
   transformer: superjson,
@@ -97,7 +96,12 @@ export const managementProcedure = t.procedure.use(
 );
 
 /**
- * ownerProcedure: Apenas o dono do sistema (OWNER_OPEN_ID via Manus OAuth) pode acessar.
+ * ownerProcedure: Apenas o dono da plataforma HigiFácil pode acessar — autenticado
+ * via login administrativo próprio (tabela admin_users, cookie admin_session,
+ * ver server/_core/context.ts). Não depende do OAuth da Manus nem de qualquer
+ * login/role de empresa: nenhum usuário de empresa (admin, master, técnico,
+ * secretária) satisfaz esta checagem, mesmo que role seja "admin"/"master" —
+ * isso é sobre hierarquia dentro da empresa, não sobre ser dono da plataforma.
  * Garante separação total entre o painel admin e os painéis das empresas clientes.
  */
 export const ownerProcedure = t.procedure.use(
@@ -108,9 +112,8 @@ export const ownerProcedure = t.procedure.use(
       throw new TRPCError({ code: "UNAUTHORIZED", message: UNAUTHED_ERR_MSG });
     }
 
-    // Verifica se é o dono via Manus OAuth (openId deve bater com OWNER_OPEN_ID)
-    const isOwner = ENV.ownerOpenId && ctx.user.openId === ENV.ownerOpenId;
-    if (!isOwner) {
+    const isPlatformAdmin = ctx.user.loginMethod === "platform_admin";
+    if (!isPlatformAdmin) {
       throw new TRPCError({ code: "FORBIDDEN", message: "Acesso restrito ao administrador do sistema." });
     }
 

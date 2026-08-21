@@ -34,6 +34,7 @@ import LandingPage from "./pages/LandingPage";
 import ClientConfirmation from "./pages/ClientConfirmation";
 import Profile from "./pages/Profile";
 import Feedback from "./pages/Feedback";
+import AdminLogin from "./pages/admin/AdminLogin";
 import AdminDashboard from "./pages/admin/AdminDashboard";
 import AdminEmpresas from "./pages/admin/AdminEmpresas";
 import AdminSolicitacoes from "./pages/admin/AdminSolicitacoes";
@@ -84,6 +85,7 @@ function Router() {
       <Route path="/bem-vindo" component={BemVindo} />
       <Route path="/feedback" component={Feedback} />
       {/* Painel Admin - exclusivo para o dono do sistema */}
+      <Route path="/admin/entrar" component={AdminLogin} />
       <Route path="/admin" component={AdminDashboard} />
       <Route path="/admin/empresas" component={AdminEmpresas} />
       <Route path="/admin/solicitacoes" component={AdminSolicitacoes} />

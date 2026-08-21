@@ -1,7 +1,7 @@
 import type { CreateExpressContextOptions } from "@trpc/server/adapters/express";
 import type { User } from "../../drizzle/schema";
 import { sdk } from "./sdk";
-import { getCompanyById, getCompanyUserByEmail } from "../db";
+import { getCompanyById, getCompanyUserByEmail, getAdminUserById } from "../db";
 import { parse as parseCookieHeader } from "cookie";
 import { jwtVerify, SignJWT } from "jose";
 import { ENV } from "./env";
@@ -11,6 +11,7 @@ const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
 const COMPANY_SESSION_COOKIE = "company_session";
 const COMPANY_USER_SESSION_COOKIE = "company_user_session";
+export const ADMIN_SESSION_COOKIE = "admin_session";
 
 export type TrpcContext = {
   req: CreateExpressContextOptions["req"];
@@ -107,19 +108,71 @@ async function authenticateCompanySession(req: CreateExpressContextOptions["req"
   }
 }
 
+/**
+ * Tenta autenticar via cookie de sessao administrativa (dono da plataforma).
+ * Totalmente separado do login de empresas/sub-usuarios e do antigo OAuth da
+ * Manus: cookie proprio (admin_session), tabela propria (admin_users).
+ */
+async function authenticateAdminSession(req: CreateExpressContextOptions["req"]): Promise<User | null> {
+  const cookies = parseCookies(req);
+  const token = cookies.get(ADMIN_SESSION_COOKIE);
+  if (!token) return null;
+
+  try {
+    const secretKey = new TextEncoder().encode(ENV.cookieSecret || "fallback-secret-change-me");
+    const { payload } = await jwtVerify(token, secretKey, { algorithms: ["HS256"] });
+    const adminId = payload.adminId as number;
+    if (!adminId) return null;
+
+    const admin = await getAdminUserById(adminId);
+    if (!admin) return null;
+
+    const syntheticUser: User = {
+      id: -(admin.id + 900000000), // faixa própria, longe dos ids sintéticos de empresa/sub-usuário
+      openId: `platform_admin_${admin.id}`,
+      name: admin.name,
+      email: admin.email,
+      loginMethod: "platform_admin",
+      role: "master",
+      companyId: null,
+      phone: null,
+      avatarUrl: null,
+      bio: null,
+      createdAt: admin.createdAt,
+      updatedAt: admin.updatedAt,
+      lastSignedIn: admin.lastSignedIn ?? admin.createdAt,
+    };
+    return syntheticUser;
+  } catch {
+    return null;
+  }
+}
+
 export async function createContext(
   opts: CreateExpressContextOptions
 ): Promise<TrpcContext> {
   let user: User | null = null;
 
-  // 1. Tentar autenticação OAuth (Manus)
+  // 1. Tentar autenticação administrativa (dono da plataforma) — cookie próprio,
+  //    independente de empresa e do antigo OAuth da Manus.
   try {
-    user = await sdk.authenticateRequest(opts.req);
+    user = await authenticateAdminSession(opts.req);
   } catch {
     user = null;
   }
 
-  // 2. Se nao autenticado via OAuth, tentar via cookie de sessao de usuario sub-empresa
+  // 2. Tentar autenticação OAuth (Manus) — legado, hoje sem uso funcional
+  //    (VITE_OAUTH_PORTAL_URL vazio), mantido apenas para não quebrar sessões
+  //    antigas caso a variável volte a ser configurada.
+  if (!user) {
+    try {
+      user = await sdk.authenticateRequest(opts.req);
+    } catch {
+      user = null;
+    }
+  }
+
+  // 3. Se nao autenticado ainda, tentar via cookie de sessao de usuario sub-empresa
   if (!user) {
     try {
       const cookies = parseCookies(opts.req);
@@ -167,7 +220,7 @@ export async function createContext(
     }
   }
 
-  // 3. Se não autenticado via sub-usuário, tentar via cookie de sessão de empresa master
+  // 4. Se não autenticado via sub-usuário, tentar via cookie de sessão de empresa master
   if (!user) {
     try {
       user = await authenticateCompanySession(opts.req, opts.res);

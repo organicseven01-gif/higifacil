@@ -2040,6 +2040,30 @@ export async function assignUserToCompany(userId: number, companyId: number) {
   await db.update(users).set({ companyId }).where(eq(users.id, userId));
 }
 
+// ─── Admin Users (login do dono da plataforma, separado das empresas) ────────
+export async function getAdminUserByEmail(email: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const { adminUsers } = await import("../drizzle/schema");
+  const rows = await db.select().from(adminUsers).where(eq(adminUsers.email, email));
+  return rows[0] ?? null;
+}
+
+export async function getAdminUserById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const { adminUsers } = await import("../drizzle/schema");
+  const rows = await db.select().from(adminUsers).where(eq(adminUsers.id, id));
+  return rows[0] ?? null;
+}
+
+export async function updateAdminUserLastSignedIn(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  const { adminUsers } = await import("../drizzle/schema");
+  await db.update(adminUsers).set({ lastSignedIn: new Date() }).where(eq(adminUsers.id, id));
+}
+
 // ─── Company Credentials (Login próprio por empresa) ─────────────────────────
 export async function getCompanyCredentialByEmail(email: string) {
   const db = await getDb();

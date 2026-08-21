@@ -49,8 +49,8 @@ describe("auth.logout", () => {
     const result = await caller.auth.logout();
 
     expect(result).toEqual({ success: true });
-    // O logout limpa 3 cookies: OAuth (COOKIE_NAME) + company_session + company_user_session
-    expect(clearedCookies).toHaveLength(3);
+    // O logout limpa 4 cookies: OAuth (COOKIE_NAME) + company_session + company_user_session + admin_session
+    expect(clearedCookies).toHaveLength(4);
     const oauthCookie = clearedCookies.find(c => c.name === COOKIE_NAME);
     expect(oauthCookie).toBeDefined();
     expect(oauthCookie?.options).toMatchObject({
@@ -69,5 +69,7 @@ describe("auth.logout", () => {
     expect(companyCookie).toBeDefined();
     const companyUserCookie = clearedCookies.find(c => c.name === "company_user_session");
     expect(companyUserCookie).toBeDefined();
+    const adminCookie = clearedCookies.find(c => c.name === "admin_session");
+    expect(adminCookie).toBeDefined();
   });
 });

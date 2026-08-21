@@ -1,5 +1,4 @@
 import { useAuth } from "@/_core/hooks/useAuth";
-import { getLoginUrl } from "@/const";
 import { trpc } from "@/lib/trpc";
 import {
   Building2,
@@ -42,7 +41,7 @@ function AdminSidebar({ onClose }: { onClose?: () => void }) {
   const handleLogout = async () => {
     await logout();
     utils.auth.me.invalidate();
-    window.location.href = "/entrar";
+    window.location.href = "/admin/entrar";
   };
 
   return (
@@ -117,45 +116,36 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const { user, loading } = useAuth();
   const [, navigate] = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [loggingOut, setLoggingOut] = useState(false);
-  const companyLogoutMutation = trpc.companyAuth.logout.useMutation();
 
-  // Verificar se é o dono do sistema via loginMethod
-  // Usuários OAuth (Google/Manus) têm loginMethod diferente de "company_email" ou "company_user_*"
-  const isCompanyLogin = user?.loginMethod?.startsWith("company");
-  const isOwner = user && !isCompanyLogin;
+  // Único critério de "é o dono da plataforma": sessão administrativa própria
+  // (admin_session / tabela admin_users). Não tem nenhuma relação com role de
+  // empresa (admin/master) nem com o antigo OAuth da Manus — um cliente
+  // logado com role "admin" na própria empresa NÃO passa aqui.
+  const isOwner = user?.loginMethod === "platform_admin";
 
   useEffect(() => {
     if (loading) return;
-    if (!user) {
-      window.location.href = getLoginUrl("/admin");
-      return;
+    if (!isOwner) {
+      // Não mexe em nenhuma sessão de empresa que porventura exista — os
+      // cookies são independentes. Só manda para o login administrativo.
+      window.location.href = "/admin/entrar";
     }
-    // Se está logado como empresa, fazer logout da empresa e redirecionar para login Google
-    if (isCompanyLogin && !loggingOut) {
-      setLoggingOut(true);
-      companyLogoutMutation.mutateAsync().finally(() => {
-        window.location.href = getLoginUrl("/admin");
-      });
-    }
-  }, [user, loading, isCompanyLogin, loggingOut]);
+  }, [loading, isOwner]);
 
-  if (loading || loggingOut) {
+  if (loading) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
           <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center animate-pulse">
             <Shield className="h-5 w-5 text-white" />
           </div>
-          <p className="text-slate-400 text-sm">
-            {loggingOut ? "Redirecionando para login do administrador..." : "Carregando painel admin..."}
-          </p>
+          <p className="text-slate-400 text-sm">Carregando painel admin...</p>
         </div>
       </div>
     );
   }
 
-  if (!user || !isOwner) {
+  if (!isOwner) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center">
         <div className="text-center">

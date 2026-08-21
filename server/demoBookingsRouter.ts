@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
+import { publicProcedure, ownerProcedure, router } from "./_core/trpc";
 import { rawExecute } from "./db";
 import { notifyOwner } from "./_core/notification";
 
@@ -92,7 +92,7 @@ export const demoBookingsRouter = router({
     }),
 
   // Listar agendamentos (admin)
-  list: protectedProcedure
+  list: ownerProcedure
     .input(
       z.object({
         status: z.string().optional(),
@@ -105,7 +105,7 @@ export const demoBookingsRouter = router({
     }),
 
   // Métricas (admin)
-  metrics: protectedProcedure.query(async () => {
+  metrics: ownerProcedure.query(async () => {
     const today = new Date().toISOString().split("T")[0];
     const weekStart = (() => {
       const d = new Date();
@@ -136,7 +136,7 @@ export const demoBookingsRouter = router({
   }),
 
   // Atualizar status (admin)
-  updateStatus: protectedProcedure
+  updateStatus: ownerProcedure
     .input(
       z.object({
         id: z.number(),
@@ -153,7 +153,7 @@ export const demoBookingsRouter = router({
     }),
 
   // Excluir (admin)
-  delete: protectedProcedure
+  delete: ownerProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       await rawExecute(`DELETE FROM demo_bookings WHERE id = ?`, [input.id]);

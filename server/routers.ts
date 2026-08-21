@@ -33,6 +33,7 @@ import {
   getSalesByClientId, getSaleReceipts, addSaleReceipt, deleteSaleReceipt, updateClientLTV,
   getPendingSales, deleteSaleByBudgetId, getCarpetOrdersByPhone,
   getUsers, setUserRole,
+  getAdminUserByEmail, updateAdminUserLastSignedIn,
   getExecutionOrders, getExecutionOrderById, createExecutionOrder, updateExecutionOrder, deleteExecutionOrder, getExecutionMetrics,
   getUpsellItems, createUpsellItem, deleteUpsellItem,
   getExecutionServiceItems, setExecutionServiceItems, getServiceItemsTotalsByOrders, getUpsellTotalsByOrders,
@@ -2285,6 +2286,55 @@ const companiesRouter = router({
     }),
 });
 
+// ==================== ADMIN AUTH ROUTER (dono da plataforma) ====================
+// Login próprio e independente do login de empresas/sub-usuários e do antigo
+// OAuth da Manus. Sem cadastro público: a única forma de criar uma conta em
+// admin_users é por script/seed executado fora da aplicação.
+const ADMIN_SESSION_COOKIE = "admin_session";
+
+const adminAuthRouter = router({
+  login: publicProcedure
+    .input(z.object({
+      email: z.string().email(),
+      password: z.string().min(1),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      // Rate limiting próprio (namespace separado do login de empresa, mesmo IP)
+      const ip = (ctx.req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || ctx.req.socket?.remoteAddress || "unknown";
+      const rateLimitKey = `admin:${ip}`;
+      if (!checkRateLimit(rateLimitKey)) {
+        const retryAfter = getRateLimitRetryAfter(rateLimitKey);
+        throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: `Muitas tentativas de login. Aguarde ${retryAfter} segundos antes de tentar novamente.` });
+      }
+
+      const admin = await getAdminUserByEmail(input.email);
+      if (!admin) throw new Error("E-mail ou senha inválidos");
+      const valid = await bcrypt.compare(input.password, admin.passwordHash);
+      if (!valid) throw new Error("E-mail ou senha inválidos");
+
+      resetRateLimit(rateLimitKey);
+      await updateAdminUserLastSignedIn(admin.id);
+
+      const secretKey = new TextEncoder().encode(ENV.cookieSecret || "fallback-secret-change-me");
+      const token = await new SignJWT({ adminId: admin.id })
+        .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+        .setIssuedAt()
+        .setExpirationTime("30d")
+        .sign(secretKey);
+      const cookieOpts = getSessionCookieOptions(ctx.req);
+      ctx.res.cookie(ADMIN_SESSION_COOKIE, token, {
+        ...cookieOpts,
+        maxAge: 30 * 24 * 60 * 60 * 1000,
+      });
+      return { success: true, admin: { id: admin.id, name: admin.name, email: admin.email } };
+    }),
+
+  logout: publicProcedure.mutation(({ ctx }) => {
+    ctx.res.clearCookie(ADMIN_SESSION_COOKIE, { path: '/' });
+    return { success: true };
+  }),
+});
+
 // ==================== COMPANY AUTH ROUTER ====================
 const COMPANY_SESSION_COOKIE = "company_session";
 
@@ -2542,24 +2592,27 @@ const companyAuthRouter = router({
 });
 
 // ==================== ADMIN ROUTER (Dono do Sistema) ====================
+// Todas as procedures abaixo usam ownerProcedure: só a sessão administrativa
+// do dono da plataforma passa. Nenhum usuário de empresa (mesmo role admin/
+// master) consegue chamar isso, nem pela API direta.
 const adminRouter = router({
   // Métricas globais do sistema
-    systemMetrics: protectedProcedure.query(async () => {
+    systemMetrics: ownerProcedure.query(async () => {
     return getSystemMetrics();
   }),
   // Listar todas as empresas com stats
-  listCompanies: protectedProcedure.query(async () => {
+  listCompanies: ownerProcedure.query(async () => {
     return getCompanies();
   }),
   // Stats de uma empresa específica
-  companyStats: protectedProcedure
+  companyStats: ownerProcedure
     .input(z.object({ companyId: z.number() }))
     .query(async ({ input }) => {
       return getCompanyStats(input.companyId);
     }),
 
   // Criar empresa + credenciais
-  createCompanyWithCredentials: protectedProcedure
+  createCompanyWithCredentials: ownerProcedure
     .input(z.object({
       name: z.string().min(1),
       email: z.string().email(),
@@ -2610,7 +2663,7 @@ const adminRouter = router({
     }),
 
   // Bloquear / desbloquear empresa
-  toggleBlock: protectedProcedure
+  toggleBlock: ownerProcedure
     .input(z.object({ companyId: z.number(), block: z.boolean() }))
     .mutation(async ({ input }) => {
       await updateCompany(input.companyId, {
@@ -2621,7 +2674,7 @@ const adminRouter = router({
     }),
 
   // Atualizar empresa (plano, status, dados)
-  updateCompany: protectedProcedure
+  updateCompany: ownerProcedure
     .input(z.object({
       id: z.number(),
       name: z.string().optional(),
@@ -2638,7 +2691,7 @@ const adminRouter = router({
     }),
 
   // Redefinir senha de acesso de uma empresa
-  resetCompanyPassword: protectedProcedure
+  resetCompanyPassword: ownerProcedure
     .input(z.object({ companyId: z.number(), newPassword: z.string().min(6) }))
     .mutation(async ({ input }) => {
       const passwordHash = await bcrypt.hash(input.newPassword, 10);
@@ -2647,7 +2700,7 @@ const adminRouter = router({
     }),
 
   // Listar solicitações de acesso
-  listAccessRequests: protectedProcedure
+  listAccessRequests: ownerProcedure
     .input(z.object({ status: z.enum(["pending", "approved", "rejected"]).optional() }))
     .query(async ({ input }) => {
       const { accessRequests } = await import("../drizzle/schema");
@@ -2661,7 +2714,7 @@ const adminRouter = router({
     }),
 
   // Listar feedbacks beta
-  listFeedbacks: protectedProcedure.query(async () => {
+  listFeedbacks: ownerProcedure.query(async () => {
     return getBetaFeedbacks();
   }),
 });
@@ -2682,6 +2735,8 @@ export const appRouter = router({
       ctx.res.clearCookie(COMPANY_SESSION_COOKIE, { path: '/' });
       // Limpa o cookie de sessão de sub-usuário da empresa
       ctx.res.clearCookie('company_user_session', { path: '/' });
+      // Limpa o cookie de sessão administrativa (dono da plataforma)
+      ctx.res.clearCookie(ADMIN_SESSION_COOKIE, { path: '/' });
       return { success: true } as const;
     }),
     updateProfile: protectedProcedure
@@ -2913,6 +2968,7 @@ export const appRouter = router({
   notifications: notificationsRouter,
   companies: companiesRouter,
   companyAuth: companyAuthRouter,
+  adminAuth: adminAuthRouter,
   admin: adminRouter,
   accessRequests: accessRequestsRouter,
   companyUsers: companyUsersRouter,
@@ -2955,7 +3011,7 @@ export const appRouter = router({
       return rows;
     }),
     // Criar funcionalidade
-    create: protectedProcedure
+    create: ownerProcedure
       .input(z.object({
         featureKey: z.string().min(1),
         featureLabel: z.string().min(1),
@@ -2973,7 +3029,7 @@ export const appRouter = router({
         return { success: true };
       }),
     // Atualizar funcionalidade
-    update: protectedProcedure
+    update: ownerProcedure
       .input(z.object({
         id: z.number(),
         featureKey: z.string().optional(),
@@ -2994,7 +3050,7 @@ export const appRouter = router({
         return { success: true };
       }),
     // Deletar funcionalidade
-    delete: protectedProcedure
+    delete: ownerProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input }) => {
         const { planFeatures } = await import("../drizzle/schema");
@@ -3005,7 +3061,7 @@ export const appRouter = router({
         return { success: true };
       }),
     // Seed com funcionalidades padrão
-    seed: protectedProcedure.mutation(async () => {
+    seed: ownerProcedure.mutation(async () => {
       const { planFeatures } = await import("../drizzle/schema");
       const db = await getDb();
       if (!db) throw new Error("DB not available");
@@ -3313,9 +3369,9 @@ export const appRouter = router({
     }),
   }),
 
-  // ─── Admin: Controle de Plano por Empresa ─────────────────────────────────
+  // ─── Admin: Controle de Plano por Empresa (ownerProcedure — só o dono) ────
   adminPlan: router({
-    listCompanyPlans: protectedProcedure.query(async () => {
+    listCompanyPlans: ownerProcedure.query(async () => {
       const db = await getDb();
       if (!db) return [];
       const { companies: companiesTable } = await import("../drizzle/schema");
@@ -3336,7 +3392,7 @@ export const appRouter = router({
       return rows;
     }),
 
-    setCompanyPlan: protectedProcedure
+    setCompanyPlan: ownerProcedure
       .input(z.object({
         companyId: z.number(),
         planType: z.enum(["free", "solo", "dupla", "equipe"]),
